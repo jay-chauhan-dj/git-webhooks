@@ -23,6 +23,16 @@ load_dotenv()
 # Initialize the Flask app instance
 app = Flask(__name__)
 
+@app.route('/', methods=['GET'])  # Define the root route
+def index():
+    """
+    Handle requests to the base URL.
+
+    Returns:
+        JSON response indicating the application is running.
+    """
+    return jsonify({"status": "success", "message": "Webhook handler is deployed and running successfully."})
+
 def load_projects_from_env():
     """
     Dynamically load project configurations from environment variables.
