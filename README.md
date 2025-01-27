@@ -82,7 +82,7 @@ pip install -r requirements.txt
 ### Step 5: Test the Application Locally
 Run the Flask app:
 ```bash
-python webhook_app.py
+python app.py
 ```
 
 The app will start at `http://127.0.0.1:5000`. You can test it locally by sending webhook requests (see [Usage](#usage)).
@@ -119,7 +119,7 @@ PROJECT_MY_PROJECT_SECRET=supersecretkey
 
 1. Start the Flask app:
    ```bash
-   python webhook_app.py
+   python app.py
    ```
 2. The app will run on `http://127.0.0.1:5000`.
 
