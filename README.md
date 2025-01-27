@@ -45,47 +45,47 @@ This project is a Flask-based webhook handler designed to process Git events dyn
 Follow these steps to set up and run the webhook handler on your local machine or server.
 
 ### Step 1: Clone the Repository
-\`\`\`bash
+```bash
 git clone https://github.com/your-username/your-repo.git
 cd your-repo
-\`\`\`
+```
 
 ### Step 2: Create a Virtual Environment
 Create an isolated Python environment for the project:
-\`\`\`bash
+```bash
 python3 -m venv venv
 source venv/bin/activate
-\`\`\`
+```
 
 ### Step 3: Install Dependencies
 Install all required Python libraries:
-\`\`\`bash
+```bash
 pip install -r requirements.txt
-\`\`\`
+```
 
 ### Step 4: Configure Environment Variables
-1. Copy the example \`.env\` file:
-   \`\`\`bash
+1. Copy the example `.env` file:
+   ```bash
    cp .env.example .env
-   \`\`\`
+   ```
 
-2. Open the \`.env\` file and add project-specific details:
-   \`\`\`dotenv
+2. Open the `.env` file and add project-specific details:
+   ```dotenv
    # Example configuration for a project
    PROJECT_MY_PROJECT_DEPLOY_SCRIPT=/path/to/deploy/script.sh
    PROJECT_MY_PROJECT_SLACK_WEBHOOK=https://hooks.slack.com/services/XXX/YYY/ZZZ
    PROJECT_MY_PROJECT_SECRET=supersecretkey
-   \`\`\`
+   ```
 
 3. Repeat for additional projects as needed.
 
 ### Step 5: Test the Application Locally
 Run the Flask app:
-\`\`\`bash
+```bash
 python webhook_app.py
-\`\`\`
+```
 
-The app will start at \`http://127.0.0.1:5000\`. You can test it locally by sending webhook requests (see [Usage](#usage)).
+The app will start at `http://127.0.0.1:5000`. You can test it locally by sending webhook requests (see [Usage](#usage)).
 
 ---
 
@@ -93,14 +93,14 @@ The app will start at \`http://127.0.0.1:5000\`. You can test it locally by send
 
 ### Environment Variables
 
-The app uses environment variables for project-specific configurations. Add the following variables to your \`.env\` file:
+The app uses environment variables for project-specific configurations. Add the following variables to your `.env` file:
 
-\`\`\`dotenv
+```dotenv
 # Example configuration for a project
 PROJECT_MY_PROJECT_DEPLOY_SCRIPT=/path/to/deploy/script.sh
 PROJECT_MY_PROJECT_SLACK_WEBHOOK=https://hooks.slack.com/services/XXX/YYY/ZZZ
 PROJECT_MY_PROJECT_SECRET=supersecretkey
-\`\`\`
+```
 
 ### Naming Convention
 
@@ -118,35 +118,35 @@ PROJECT_MY_PROJECT_SECRET=supersecretkey
 ### Locally
 
 1. Start the Flask app:
-   \`\`\`bash
+   ```bash
    python webhook_app.py
-   \`\`\`
-2. The app will run on \`http://127.0.0.1:5000\`.
+   ```
+2. The app will run on `http://127.0.0.1:5000`.
 
 ### Using Gunicorn (Production)
 
 1. Run the app with Gunicorn:
-   \`\`\`bash
+   ```bash
    gunicorn --bind 127.0.0.1:8000 webhook_app:app
-   \`\`\`
+   ```
 
 ---
 
 ## Deploying with Nginx
 
 1. **Install Nginx**:
-   \`\`\`bash
+   ```bash
    sudo apt update
    sudo apt install nginx
-   \`\`\`
+   ```
 
 2. **Configure Nginx**:
    Create a configuration file for your app:
-   \`\`\`bash
+   ```bash
    sudo nano /etc/nginx/sites-available/webhook-app
-   \`\`\`
+   ```
    Add the following:
-   \`\`\`nginx
+   ```nginx
    server {
        listen 80;
        server_name your-domain.com;
@@ -159,21 +159,21 @@ PROJECT_MY_PROJECT_SECRET=supersecretkey
            proxy_set_header X-Forwarded-Proto $scheme;
        }
    }
-   \`\`\`
+   ```
 
 3. **Enable the configuration**:
-   \`\`\`bash
+   ```bash
    sudo ln -s /etc/nginx/sites-available/webhook-app /etc/nginx/sites-enabled/
    sudo systemctl restart nginx
-   \`\`\`
+   ```
 
 4. **Run Gunicorn as a service**:
    Create a systemd service file for Gunicorn:
-   \`\`\`bash
+   ```bash
    sudo nano /etc/systemd/system/webhook-app.service
-   \`\`\`
+   ```
    Add the following:
-   \`\`\`ini
+   ```ini
    [Unit]
    Description=Gunicorn instance to serve webhook-app
    After=network.target
@@ -187,22 +187,22 @@ PROJECT_MY_PROJECT_SECRET=supersecretkey
 
    [Install]
    WantedBy=multi-user.target
-   \`\`\`
+   ```
 
 5. **Start and enable the service**:
-   \`\`\`bash
+   ```bash
    sudo systemctl start webhook-app
    sudo systemctl enable webhook-app
-   \`\`\`
+   ```
 
 ---
 
 ## Usage
 
 1. **Set up a Git Webhook**:
-   - URL: \`http://your-domain.com/webhook/<branch>\` (e.g., \`main\`).
-   - Content type: \`application/json\`.
-   - Secret: Use the same secret key defined in your \`.env\` file.
+   - URL: `http://your-domain.com/webhook/<branch>` (e.g., `main`).
+   - Content type: `application/json`.
+   - Secret: Use the same secret key defined in your `.env` file.
 
 2. **Trigger events**:
    - Push to the configured branch.
@@ -215,9 +215,9 @@ PROJECT_MY_PROJECT_SECRET=supersecretkey
 Contributions are welcome! Please follow these steps:
 
 1. Fork the repository.
-2. Create a new branch (\`feature/your-feature-name\`).
-3. Commit your changes (\`git commit -m 'Add some feature'\`).
-4. Push to the branch (\`git push origin feature/your-feature-name\`).
+2. Create a new branch (`feature/your-feature-name`).
+3. Commit your changes (`git commit -m 'Add some feature'`).
+4. Push to the branch (`git push origin feature/your-feature-name`).
 5. Open a Pull Request.
 
 ---
