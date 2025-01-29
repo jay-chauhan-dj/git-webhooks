@@ -23,22 +23,9 @@ load_dotenv()
 # Initialize the Flask app instance
 app = Flask(__name__)
 
-@app.route('/', methods=['GET'])  # Define the root route
-def index():
-    """
-    Handle requests to the base URL.
-
-    Returns:
-        JSON response indicating the application is running.
-    """
-    return jsonify({"status": "success", "message": "Webhook handler is deployed and running successfully."})
-
 def load_projects_from_env():
     """
     Dynamically load project configurations from environment variables.
-
-    Returns:
-        dict: A dictionary where each key is a project name and the value is a dictionary of its settings.
     """
     projects = defaultdict(dict)  # Use defaultdict to handle dynamic project creation
     for key, value in os.environ.items():  # Iterate through all environment variables
@@ -52,31 +39,38 @@ def load_projects_from_env():
 # Generate the PROJECTS dictionary dynamically by calling the load_projects_from_env function
 PROJECTS = load_projects_from_env()
 
+@app.route('/', methods=['GET'])  # Define the root route
+def index():
+    """
+    Handle requests to the base URL.
+    """
+    return jsonify({"status": "success", "message": "Webhook handler is deployed and running successfully."})
+
 @app.route('/webhook/<branch>', methods=['POST'])  # Define a POST route to handle incoming webhooks
 def handle_webhook(branch):
     """
-    Handle incoming Git webhook events.
-
-    Args:
-        branch (str): The branch specified in the URL (e.g., 'main').
-
-    Returns:
-        JSON response indicating the status of the request handling.
+    Handle incoming Git webhook events by validating the secret and selecting the appropriate project.
     """
-    # Extract the project name from the request headers
-    project_name = request.headers.get('X-GitHub-Project', 'unknown').lower()
-    project_config = PROJECTS.get(project_name)  # Fetch the project configuration for the given project name
-    if not project_config:  # If the project configuration is not found
-        return jsonify({"error": "Unknown project"}), 400  # Return an error response with status 400
-
-    # Validate the HMAC signature for the request
-    secret = project_config.get("secret", "")  # Retrieve the secret key for the project
     payload = request.data  # Extract the raw payload data from the request
-    signature = 'sha256=' + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()  # Generate the HMAC signature
-    if not hmac.compare_digest(signature, request.headers.get('X-Hub-Signature-256', '')):  # Compare signatures securely
-        return jsonify({"error": "Invalid signature"}), 403  # Return an error response with status 403
+    received_signature = request.headers.get('X-Hub-Signature-256', '')  # Retrieve the signature from headers
+    
+    # Identify the project based on the provided secret
+    matching_project = None
+    for project_name, config in PROJECTS.items():  # Iterate through all configured projects
+        secret = config.get("secret", "")  # Retrieve the secret key for the project
+        if not secret:
+            continue
 
-    # Parse the payload to extract event details
+        # Validate HMAC signature
+        computed_signature = 'sha256=' + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(computed_signature, received_signature):  # Compare signatures securely
+            matching_project = project_name
+            break
+
+    if not matching_project:  # If no matching project is found
+        return jsonify({"error": "Invalid signature or unknown project"}), 403  # Return error response
+    
+    project_config = PROJECTS[matching_project]  # Retrieve the matched project configuration
     event = request.headers.get('X-GitHub-Event', 'unknown')  # Get the event type from headers
     payload_data = json.loads(payload)  # Convert the JSON payload into a Python dictionary
     ref = payload_data.get('ref', '')  # Get the reference string (e.g., 'refs/heads/main')
@@ -84,12 +78,11 @@ def handle_webhook(branch):
     commit_message = payload_data.get('head_commit', {}).get('message', 'N/A')  # Get the commit message, default to 'N/A'
     timestamp = datetime.now().strftime('%d %b, %Y %I:%M %p')  # Format the current timestamp for Slack notification
     deployment_response = "N/A"  # Initialize the deployment response message
-
-    # Prepare the Slack message and handle specific Git events
-    slack_message = f"Received `{event}` event on branch `{event_branch}` for `{project_name}`"  # Base Slack message
+    
+    slack_message = f"Received `{event}` event on branch `{event_branch}` for `{matching_project}`"  # Base Slack message
+    
     if event == "push" and branch == "main" and event_branch == branch:  # Check if the event is a push to the main branch
         try:
-            # Run the deployment script using subprocess with sudo
             subprocess.run(
                 ["sudo", project_config.get("deploy_script")],  # Command to run the deployment script
                 check=True,  # Ensure the command raises an exception on failure
@@ -100,35 +93,19 @@ def handle_webhook(branch):
         except subprocess.CalledProcessError as e:  # Catch exceptions if the script fails
             deployment_response = f"Failed: {e.output.decode()}"  # Capture and decode the error output
             slack_message += f" - Deployment failed: {deployment_response}"  # Append failure message to Slack notification
-
-    # Send the prepared Slack notification
+    
     send_slack_notification(
         project_config.get("slack_webhook"),  # Get the Slack webhook URL from the project configuration
-        format_slack_payload(  # Format the Slack payload with the event details
-            project_name,
-            event,
-            timestamp,
-            branch,
-            commit_message,
-            deployment_response,
+        format_slack_payload(
+            matching_project, event, timestamp, branch, commit_message, deployment_response
         ),
     )
+    
     return jsonify({"message": slack_message})  # Return the Slack message as a JSON response
 
 def format_slack_payload(repo_name, event_type, when, branch, commit_message, deployment_response):
     """
     Format the payload for Slack notifications using Slack's Block Kit.
-
-    Args:
-        repo_name (str): Repository name.
-        event_type (str): Type of event (e.g., 'push').
-        when (str): Timestamp of the event.
-        branch (str): Target branch for the event.
-        commit_message (str): Commit message associated with the event.
-        deployment_response (str): Result of the deployment script.
-
-    Returns:
-        dict: Slack notification payload formatted as a JSON object.
     """
     return {
         "blocks": [
@@ -155,13 +132,6 @@ def format_slack_payload(repo_name, event_type, when, branch, commit_message, de
 def send_slack_notification(webhook_url, payload):
     """
     Send a Slack notification using the provided webhook URL and payload.
-
-    Args:
-        webhook_url (str): The Slack webhook URL for sending notifications.
-        payload (dict): The payload containing the message details.
-
-    Returns:
-        None
     """
     headers = {"Content-Type": "application/json"}  # Set the content type for the Slack API request
     response = requests.post(webhook_url, data=json.dumps(payload), headers=headers)  # Send the POST request to Slack
