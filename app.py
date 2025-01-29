@@ -68,7 +68,7 @@ def handle_webhook(branch):
             break
 
     if not matching_project:  # If no matching project is found
-        return jsonify({"error": f"Invalid signature or unknown project. `{computed_signature}`"), 403  # Return error response
+        return jsonify({"error": "Invalid signature or unknown project. " + computed_signature), 403  # Return error response
     
     project_config = PROJECTS[matching_project]  # Retrieve the matched project configuration
     event = request.headers.get('X-GitHub-Event', 'unknown')  # Get the event type from headers
