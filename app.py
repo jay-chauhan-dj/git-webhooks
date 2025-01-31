@@ -95,7 +95,7 @@ def handle_webhook(branch):
             deployment_response = f"{output}"  # Success message
             slack_message += " - Deployment started successfully."  # Append success message to Slack notification
         except subprocess.CalledProcessError as e:  # Catch exceptions if the script fails
-            deployment_response = f"Failed: {e.output.decode()}"  # Capture and decode the error output
+            deployment_response = f"Failed: "  # Capture and decode the error output
             slack_message += f" - Deployment failed: {deployment_response}"  # Append failure message to Slack notification
         except Exception as e:  # Generic catch for unexpected errors
             deployment_response = f"Unexpected error: {str(e)}"
