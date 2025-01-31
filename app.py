@@ -68,7 +68,7 @@ def handle_webhook(branch):
             break
 
     if not matching_project:  # If no matching project is found
-        return jsonify({"error": "Invalid signature or unknown project."), 403  # Return error response
+        return jsonify({"error": "Invalid signature or unknown project."}), 403  # Return error response
     
     project_config = PROJECTS[matching_project]  # Retrieve the matched project configuration
     event = request.headers.get('X-GitHub-Event', 'unknown')  # Get the event type from headers
@@ -83,16 +83,23 @@ def handle_webhook(branch):
     
     if event == "push" and branch == "main" and event_branch == branch:  # Check if the event is a push to the main branch
         try:
-            subprocess.run(
-                ["sudo", project_config.get("deploy_script")],  # Command to run the deployment script
+            result = subprocess.run(
+                ["/usr/bin/sudo", project_config.get("deploy_script")],  # Command to run the deployment script
                 check=True,  # Ensure the command raises an exception on failure
                 capture_output=True,  # Capture the output of the script
+                text=True  # Return output as a string (Python 3.7+)
             )
-            deployment_response = "Success"  # Update the response to indicate success
+            
+            # Capture command output
+            output = result.stdout.strip()  # Get standard output (remove extra spaces)
+            deployment_response = f"{output}"  # Success message
             slack_message += " - Deployment started successfully."  # Append success message to Slack notification
         except subprocess.CalledProcessError as e:  # Catch exceptions if the script fails
             deployment_response = f"Failed: {e.output.decode()}"  # Capture and decode the error output
             slack_message += f" - Deployment failed: {deployment_response}"  # Append failure message to Slack notification
+        except Exception as e:  # Generic catch for unexpected errors
+            deployment_response = f"Unexpected error: {str(e)}"
+            slack_message += f" - Deployment failed: {deployment_response}"
     
     send_slack_notification(
         project_config.get("slack_webhook"),  # Get the Slack webhook URL from the project configuration
