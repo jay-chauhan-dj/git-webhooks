@@ -127,7 +127,7 @@ PROJECT_MY_PROJECT_SECRET=supersecretkey
 
 1. Run the app with Gunicorn:
    ```bash
-   gunicorn --bind 127.0.0.1:8000 webhook_app:app
+   gunicorn --bind 127.0.0.1:8000 app:app
    ```
 
 ---
@@ -183,7 +183,7 @@ PROJECT_MY_PROJECT_SECRET=supersecretkey
    Group=www-data
    WorkingDirectory=/path/to/your-app
    Environment="PATH=/path/to/your-app/venv/bin"
-   ExecStart=/path/to/your-app/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 webhook_app:app
+   ExecStart=/path/to/your-app/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 app:app
 
    [Install]
    WantedBy=multi-user.target
