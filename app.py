@@ -120,7 +120,7 @@ def format_slack_payload(repo_name, event_type, when, branch, commit_message, de
                 "type": "section",  # Section block for the title
                 "text": {
                     "type": "mrkdwn",  # Markdown-enabled text
-                    "text": f"*[{repo_name}]* - Git Event Notification"  # Title text with repository name
+                    "text": f"*[{repo_name.strip("[]").replace("-", " ").title()}]* - Git Event Notification"  # Title text with repository name
                 }
             },
             {
