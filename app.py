@@ -104,7 +104,7 @@ def handle_webhook(branch):
     send_slack_notification(
         project_config.get("slack_webhook"),  # Get the Slack webhook URL from the project configuration
         format_slack_payload(
-            matching_project, event, timestamp, branch, commit_message, deployment_response
+            matching_project, event, timestamp, event_branch, commit_message, deployment_response
         ),
     )
     
