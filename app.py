@@ -81,7 +81,7 @@ def handle_webhook(branch):
     
     slack_message = f"Received `{event}` event on branch `{event_branch}` for `{matching_project}`"  # Base Slack message
     
-    if event == "push" and branch == "main" and event_branch == branch:  # Check if the event is a push to the main branch
+    if event == "push" and event_branch == branch:  # Check if the event is a push to the main branch
         try:
             result = subprocess.run(
                 ["/usr/bin/sudo", project_config.get("deploy_script")],  # Command to run the deployment script
