@@ -1,0 +1,5 @@
+{
+    "PROJECT_TEST_PROJECT_DEPLOY_SCRIPT": "/path/to/deploy.sh",
+    "PROJECT_TEST_PROJECT_SLACK_WEBHOOK": "https://hooks.slack.com/test",
+    "PROJECT_TEST_PROJECT_SECRET": "test_secret_123"
+}
