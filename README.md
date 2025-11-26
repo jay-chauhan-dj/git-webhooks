@@ -34,6 +34,7 @@ This project is a Flask-based webhook handler designed to process Git events dyn
 - Python 3.8 or higher
 - Flask
 - Gunicorn
+- MySQL 5.7 or higher
 - Nginx (for production deployment)
 - Slack Webhook URL
 - Git webhook integration
@@ -63,23 +64,50 @@ Install all required Python libraries:
 pip install -r requirements.txt
 ```
 
-### Step 4: Configure Environment Variables
+### Step 4: Setup MySQL Database
+1. Install MySQL server on your system
+2. Create a database for the application:
+   ```sql
+   CREATE DATABASE git_webhooks;
+   ```
+3. Create a MySQL user (optional but recommended):
+   ```sql
+   CREATE USER 'webhook_user'@'localhost' IDENTIFIED BY 'your_password';
+   GRANT ALL PRIVILEGES ON git_webhooks.* TO 'webhook_user'@'localhost';
+   FLUSH PRIVILEGES;
+   ```
+
+### Step 5: Configure Environment Variables
 1. Copy the example `.env` file:
    ```bash
    cp .env.example .env
    ```
 
-2. Open the `.env` file and add project-specific details:
+2. Open the `.env` file and configure MySQL connection:
    ```dotenv
-   # Example configuration for a project
-   PROJECT_MY_PROJECT_DEPLOY_SCRIPT=/path/to/deploy/script.sh
-   PROJECT_MY_PROJECT_SLACK_WEBHOOK=https://hooks.slack.com/services/XXX/YYY/ZZZ
-   PROJECT_MY_PROJECT_SECRET=supersecretkey
+   # MySQL Database Configuration
+   DB_HOST=localhost
+   DB_NAME=git_webhooks
+   DB_USER=webhook_user
+   DB_PASSWORD=your_password
+   DB_PORT=3306
    ```
 
-3. Repeat for additional projects as needed.
+3. The application will automatically create tables and sample projects on first run.
 
-### Step 5: Test the Application Locally
+### Step 6: Initialize Database (Optional)
+If you want to manually create the database structure:
+```bash
+python create_mysql_db.py
+```
+
+### Step 7: Migrate from SQLite (If Applicable)
+If you're upgrading from the SQLite version:
+```bash
+python migrate_sqlite_to_mysql.py
+```
+
+### Step 8: Test the Application Locally
 Run the Flask app:
 ```bash
 python app.py
@@ -93,14 +121,18 @@ The app will start at `http://127.0.0.1:5000`. You can test it locally by sendin
 
 ### Environment Variables
 
-The app uses environment variables for project-specific configurations. Add the following variables to your `.env` file:
+The app uses environment variables for database configuration. Add the following variables to your `.env` file:
 
 ```dotenv
-# Example configuration for a project
-PROJECT_MY_PROJECT_DEPLOY_SCRIPT=/path/to/deploy/script.sh
-PROJECT_MY_PROJECT_SLACK_WEBHOOK=https://hooks.slack.com/services/XXX/YYY/ZZZ
-PROJECT_MY_PROJECT_SECRET=supersecretkey
+# MySQL Database Configuration
+DB_HOST=localhost
+DB_NAME=git_webhooks
+DB_USER=webhook_user
+DB_PASSWORD=your_password
+DB_PORT=3306
 ```
+
+**Note:** Project configurations are now managed through the database instead of environment variables. Use the API endpoints to add/manage projects.
 
 ### Naming Convention
 

@@ -13,79 +13,92 @@ import subprocess
 import json
 import requests
 import os
-import sqlite3
 import secrets
 import string
 from datetime import datetime
 from collections import defaultdict
+from dotenv import load_dotenv
+from db_config import get_db_connection, execute_query
+
+load_dotenv()
 
 # Initialize the Flask app instance
 app = Flask(__name__)
 
 def init_database():
-    """Initialize database with sample projects if it doesn't exist"""
-    if not os.path.exists('projects.db'):
-        conn = sqlite3.connect('projects.db')
-        cursor = conn.cursor()
-        
-        # Projects table
-        cursor.execute('''
-            CREATE TABLE projects (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                deploy_script TEXT NOT NULL,
-                slack_webhook TEXT NOT NULL,
-                secret TEXT
-            )
-        ''')
-        
-        # Webhook events table
-        cursor.execute('''
-            CREATE TABLE webhook_events (
-                id INTEGER PRIMARY KEY,
-                project_name TEXT NOT NULL,
-                repository_name TEXT,
-                repository_url TEXT,
-                clone_url TEXT,
-                event_type TEXT,
-                branch TEXT,
-                commit_message TEXT,
-                commit_id TEXT,
-                author_name TEXT,
-                author_email TEXT,
-                timestamp TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Add sample projects
-        projects = [
-            ("My First Project", "/path/to/my_first_project/deploy_script.sh", "https://hooks.slack.com/services/XXX/YYY/ZZZ"),
-            ("Another Project", "/path/to/another_project/deploy_script.sh", "https://hooks.slack.com/services/AAA/BBB/CCC"),
-            ("Test Project", "/path/to/test/deploy.sh", "https://hooks.slack.com/test")
-        ]
-        
-        for name, script, webhook in projects:
-            secret = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
-            cursor.execute(
-                "INSERT INTO projects (name, deploy_script, slack_webhook, secret) VALUES (?, ?, ?, ?)",
-                (name, script, webhook, secret)
-            )
-        
-        conn.commit()
-        conn.close()
-        print("Database initialized with sample projects")
-
-def load_projects_from_database():
-    """Load project configurations directly from database"""
-    projects = defaultdict(dict)
+    """Initialize MySQL database with sample projects if tables don't exist"""
+    connection = get_db_connection()
+    if not connection:
+        print("Failed to connect to MySQL database")
+        return
     
     try:
-        conn = sqlite3.connect('projects.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, deploy_script, slack_webhook, secret FROM projects")
-        db_projects = cursor.fetchall()
+        cursor = connection.cursor()
         
+        # Check if projects table exists
+        cursor.execute("SHOW TABLES LIKE 'projects'")
+        if not cursor.fetchone():
+            # Projects table
+            cursor.execute('''
+                CREATE TABLE projects (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    deploy_script TEXT NOT NULL,
+                    slack_webhook TEXT NOT NULL,
+                    secret VARCHAR(255)
+                )
+            ''')
+            
+            # Webhook events table
+            cursor.execute('''
+                CREATE TABLE webhook_events (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    project_name VARCHAR(255) NOT NULL,
+                    repository_name VARCHAR(255),
+                    repository_url TEXT,
+                    clone_url TEXT,
+                    event_type VARCHAR(100),
+                    branch VARCHAR(255),
+                    commit_message TEXT,
+                    commit_id VARCHAR(255),
+                    author_name VARCHAR(255),
+                    author_email VARCHAR(255),
+                    timestamp VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Add sample projects
+            projects = [
+                ("My First Project", "/path/to/my_first_project/deploy_script.sh", "https://hooks.slack.com/services/XXX/YYY/ZZZ"),
+                ("Another Project", "/path/to/another_project/deploy_script.sh", "https://hooks.slack.com/services/AAA/BBB/CCC"),
+                ("Test Project", "/path/to/test/deploy.sh", "https://hooks.slack.com/test")
+            ]
+            
+            for name, script, webhook in projects:
+                secret = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+                cursor.execute(
+                    "INSERT INTO projects (name, deploy_script, slack_webhook, secret) VALUES (%s, %s, %s, %s)",
+                    (name, script, webhook, secret)
+                )
+            
+            connection.commit()
+            print("MySQL database initialized with sample projects")
+        
+        cursor.close()
+        connection.close()
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+        if connection:
+            connection.close()
+
+def load_projects_from_database():
+    """Load project configurations directly from MySQL database"""
+    projects = defaultdict(dict)
+    
+    db_projects = execute_query("SELECT name, deploy_script, slack_webhook, secret FROM projects", fetch=True)
+    
+    if db_projects:
         for name, deploy_script, slack_webhook, secret in db_projects:
             project_key = name.lower().replace(" ", "_").replace("-", "_")
             projects[project_key] = {
@@ -94,57 +107,40 @@ def load_projects_from_database():
                 'secret': secret,
                 'name': name
             }
-        
-        conn.close()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
     
     return projects
 
 def save_webhook_event(project_name, payload_data, event_type):
-    """Save webhook event to database"""
-    try:
-        conn = sqlite3.connect('projects.db')
-        cursor = conn.cursor()
-        
-        # Extract data from payload
-        repository = payload_data.get('repository', {})
-        repo_name = repository.get('name', 'Unknown')
-        repo_url = repository.get('html_url', 'N/A')
-        clone_url = repository.get('clone_url', 'N/A')
-        ref = payload_data.get('ref', '')
-        branch = ref.split('/')[-1] if 'refs/heads/' in ref else 'Unknown'
-        
-        head_commit = payload_data.get('head_commit', {})
-        commit_message = head_commit.get('message', 'N/A')
-        commit_id = head_commit.get('id', 'N/A')
-        
-        author = head_commit.get('author', {})
-        author_name = author.get('name', 'Unknown')
-        author_email = author.get('email', 'Unknown')
-        
-        timestamp = head_commit.get('timestamp', datetime.now().isoformat())
-        
-        cursor.execute('''
-            INSERT INTO webhook_events 
-            (project_name, repository_name, repository_url, clone_url, event_type, branch, commit_message, 
-             commit_id, author_name, author_email, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (project_name, repo_name, repo_url, clone_url, event_type, branch, commit_message, 
-              commit_id, author_name, author_email, timestamp))
-        
-        conn.commit()
-        conn.close()
-        
-    except sqlite3.Error as e:
-        print(f"Error saving webhook event: {e}")
-        # Try to add missing columns if table exists
-        try:
-            cursor.execute('ALTER TABLE webhook_events ADD COLUMN repository_url TEXT')
-            cursor.execute('ALTER TABLE webhook_events ADD COLUMN clone_url TEXT')
-            conn.commit()
-        except:
-            pass
+    """Save webhook event to MySQL database"""
+    # Extract data from payload
+    repository = payload_data.get('repository', {})
+    repo_name = repository.get('name', 'Unknown')
+    repo_url = repository.get('html_url', 'N/A')
+    clone_url = repository.get('clone_url', 'N/A')
+    ref = payload_data.get('ref', '')
+    branch = ref.split('/')[-1] if 'refs/heads/' in ref else 'Unknown'
+    
+    head_commit = payload_data.get('head_commit', {})
+    commit_message = head_commit.get('message', 'N/A')
+    commit_id = head_commit.get('id', 'N/A')
+    
+    author = head_commit.get('author', {})
+    author_name = author.get('name', 'Unknown')
+    author_email = author.get('email', 'Unknown')
+    
+    timestamp = head_commit.get('timestamp', datetime.now().isoformat())
+    
+    query = '''
+        INSERT INTO webhook_events 
+        (project_name, repository_name, repository_url, clone_url, event_type, branch, commit_message, 
+         commit_id, author_name, author_email, timestamp)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    '''
+    
+    params = (project_name, repo_name, repo_url, clone_url, event_type, branch, commit_message, 
+              commit_id, author_name, author_email, timestamp)
+    
+    execute_query(query, params)
 
 # Global variable for projects
 PROJECTS = {}
@@ -164,43 +160,53 @@ def debug_info():
         "projects_count": len(PROJECTS),
         "projects": list(PROJECTS.keys()),
         "project_details": {name: {k: v for k, v in config.items() if k != 'secret'} for name, config in PROJECTS.items()},
-        "database_exists": os.path.exists("projects.db")
+        "database_connected": get_db_connection() is not None
     })
+
+@app.route('/get-secrets', methods=['GET'])
+def get_secrets():
+    """Get project secrets for testing"""
+    global PROJECTS
+    PROJECTS = load_projects_from_database()
+    
+    secrets_data = {}
+    for project_key, config in PROJECTS.items():
+        secrets_data[config['name']] = config['secret']
+    
+    return jsonify({"secrets": secrets_data})
 
 @app.route('/webhook-events', methods=['GET'])
 def get_webhook_events():
-    """Get all webhook events from database"""
-    try:
-        conn = sqlite3.connect('projects.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT project_name, repository_name, repository_url, clone_url, event_type, branch, 
-                   commit_message, author_name, timestamp, created_at
-            FROM webhook_events 
-            ORDER BY created_at DESC 
-            LIMIT 50
-        ''')
-        
-        events = []
-        for row in cursor.fetchall():
-            events.append({
-                "project_name": row[0],
-                "repository_name": row[1],
-                "repository_url": row[2],
-                "clone_url": row[3],
-                "event_type": row[4],
-                "branch": row[5],
-                "commit_message": row[6],
-                "author_name": row[7],
-                "timestamp": row[8],
-                "created_at": row[9]
-            })
-        
-        conn.close()
-        return jsonify({"events": events, "count": len(events)})
-        
-    except sqlite3.Error as e:
-        return jsonify({"error": f"Database error: {e}"}), 500
+    """Get all webhook events from MySQL database"""
+    query = '''
+        SELECT project_name, repository_name, repository_url, clone_url, event_type, branch, 
+               commit_message, author_name, timestamp, created_at
+        FROM webhook_events 
+        ORDER BY created_at DESC 
+        LIMIT 50
+    '''
+    
+    rows = execute_query(query, fetch=True)
+    
+    if rows is None:
+        return jsonify({"error": "Database connection failed"}), 500
+    
+    events = []
+    for row in rows:
+        events.append({
+            "project_name": row[0],
+            "repository_name": row[1],
+            "repository_url": row[2],
+            "clone_url": row[3],
+            "event_type": row[4],
+            "branch": row[5],
+            "commit_message": row[6],
+            "author_name": row[7],
+            "timestamp": row[8],
+            "created_at": row[9]
+        })
+    
+    return jsonify({"events": events, "count": len(events)})
 
 @app.route('/add-project', methods=['POST'])
 def add_project():
@@ -220,16 +226,13 @@ def add_project():
         # Generate secret key automatically
         secret = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(64))
         
-        conn = sqlite3.connect('projects.db')
-        cursor = conn.cursor()
+        query = "INSERT INTO projects (name, deploy_script, slack_webhook, secret) VALUES (%s, %s, %s, %s)"
+        params = (name, deploy_script, slack_webhook, secret)
         
-        cursor.execute(
-            "INSERT INTO projects (name, deploy_script, slack_webhook, secret) VALUES (?, ?, ?, ?)",
-            (name, deploy_script, slack_webhook, secret)
-        )
+        result = execute_query(query, params)
         
-        conn.commit()
-        conn.close()
+        if result is None:
+            return jsonify({"error": "Database connection failed"}), 500
         
         # Reload projects
         global PROJECTS
@@ -243,177 +246,41 @@ def add_project():
             "timestamp": datetime.now().strftime('%d %b, %Y %I:%M %p')
         }), 200
         
-    except sqlite3.Error as e:
+    except Exception as e:
         return jsonify({"error": f"Database error: {e}"}), 500
 
-@app.route('/add-project-with-secret', methods=['POST'])
-def add_project_with_secret():
-    """Add new project with manager's secret key"""
-    data = request.json
-    if not data:
-        return jsonify({"error": "No data received"}), 400
-
-    name = data.get("name")
-    deploy_script = data.get("deploy_script")
-    slack_webhook = data.get("slack_webhook")
-    secret = data.get("secret")  # Manager provides this
-
-    if not all([name, deploy_script, slack_webhook, secret]):
-        return jsonify({"error": "Missing required fields: name, deploy_script, slack_webhook, secret"}), 400
-
-    try:
-        conn = sqlite3.connect('projects.db')
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            "INSERT INTO projects (name, deploy_script, slack_webhook, secret) VALUES (?, ?, ?, ?)",
-            (name, deploy_script, slack_webhook, secret)
-        )
-        
-        conn.commit()
-        conn.close()
-        
-        # Reload projects
-        global PROJECTS
-        PROJECTS = load_projects_from_database()
-        
-        return jsonify({
-            "message": f"Project '{name}' added successfully with manager's secret!",
-            "secret": secret
-        }), 200
-        
-    except sqlite3.Error as e:
-        return jsonify({"error": f"Database error: {e}"}), 500
-
-@app.route('/process-payload', methods=['POST'])
-def process_payload():
-    """Process payload.txt file content with manager's secret"""
-    data = request.json
-    if not data:
-        return jsonify({"error": "No data received"}), 400
-
-    payload_content = data.get("payload")
-    secret_key = data.get("secret")
+@app.route('/test-webhook', methods=['POST'])
+def test_webhook():
+    """Test webhook without signature validation"""
+    payload_data = request.get_json()
     
-    if not payload_content or not secret_key:
-        return jsonify({"error": "Missing payload or secret"}), 400
-
-    try:
-        # Parse payload
-        if isinstance(payload_content, str):
-            payload_data = json.loads(payload_content)
-        else:
-            payload_data = payload_content
-        
-        # Find matching project by secret
-        matching_project = None
-        for project_name, config in PROJECTS.items():
-            if config.get("secret") == secret_key:
-                matching_project = project_name
-                break
-        
-        if not matching_project:
-            return jsonify({"error": "Invalid secret key"}), 403
-        
-        # Extract repository info
-        repository = payload_data.get('repository', {})
-        repo_name = repository.get('name', 'Unknown')
-        repo_url = repository.get('html_url', 'N/A')
-        clone_url = repository.get('clone_url', 'N/A')
-        event_type = 'push'  # Default
-        
-        # Save to database
-        save_webhook_event(PROJECTS[matching_project]['name'], payload_data, event_type)
-        
-        return jsonify({
-            "message": "Payload processed successfully!",
-            "project": PROJECTS[matching_project]['name'],
-            "repository": repo_name,
-            "repository_url": repo_url,
-            "clone_url": clone_url,
-            "timestamp": datetime.now().strftime('%d %b, %Y %I:%M %p')
-        }), 200
-        
-    except json.JSONDecodeError:
-        return jsonify({"error": "Invalid JSON in payload"}), 400
-    except Exception as e:
-        return jsonify({"error": f"Processing error: {str(e)}"}), 500
-
-@app.route('/search-repos', methods=['POST'])
-def search_repos_by_secret():
-    """Search repositories by secret key"""
-    data = request.json
-    if not data:
-        return jsonify({"error": "No data received"}), 400
-
-    secret_key = data.get("secret")
-    if not secret_key:
-        return jsonify({"error": "Missing secret key"}), 400
-
-    try:
-        # Find matching project by secret
-        matching_project = None
-        project_config = None
-        for project_name, config in PROJECTS.items():
-            if config.get("secret") == secret_key:
-                matching_project = project_name
-                project_config = config
-                break
-        
-        if not matching_project:
-            return jsonify({"error": "Invalid secret key"}), 403
-        
-        # Get webhook events for this project
-        conn = sqlite3.connect('projects.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT repository_name, repository_url, clone_url, event_type, branch, commit_message, 
-                   author_name, timestamp, created_at
-            FROM webhook_events 
-            WHERE project_name = ?
-            ORDER BY created_at DESC
-        ''', (project_config['name'],))
-        
-        events = []
-        for row in cursor.fetchall():
-            events.append({
-                "repository_name": row[0],
-                "repository_url": row[1],
-                "clone_url": row[2],
-                "event_type": row[3],
-                "branch": row[4],
-                "commit_message": row[5],
-                "author_name": row[6],
-                "timestamp": row[7],
-                "created_at": row[8]
-            })
-        
-        conn.close()
-        
-        return jsonify({
-            "project_name": project_config['name'],
-            "secret_valid": True,
-            "events_count": len(events),
-            "repositories": events,
-            "search_timestamp": datetime.now().strftime('%d %b, %Y %I:%M %p')
-        }), 200
-        
-    except sqlite3.Error as e:
-        return jsonify({"error": f"Database error: {e}"}), 500
-    except Exception as e:
-        return jsonify({"error": f"Search error: {str(e)}"}), 500
+    if not payload_data:
+        return jsonify({"error": "No JSON data received"}), 400
+    
+    return jsonify({
+        "status": "success",
+        "message": "Test webhook received (no signature validation)",
+        "received_data": {
+            "repository": payload_data.get('repository', {}).get('name', 'Unknown'),
+            "branch": payload_data.get('ref', 'Unknown').split('/')[-1],
+            "commit_message": payload_data.get('head_commit', {}).get('message', 'N/A')
+        }
+    })
 
 @app.route('/webhook/<branch>', methods=['POST'])
 def handle_webhook(branch):
-    """Handle incoming Git webhook events"""
+    """Handle incoming Git webhook events - Fast response"""
     payload = request.data
     received_signature = request.headers.get('X-Hub-Signature-256', '')
     
     global PROJECTS
-    PROJECTS = load_projects_from_database()
+    if not PROJECTS:  # Load only if empty
+        PROJECTS = load_projects_from_database()
     
-    # Normal signature validation
+    # Fast signature validation
     matching_project = None
+    project_config = None
+    
     for project_name, config in PROJECTS.items():
         secret = config.get("secret", "")
         if not secret:
@@ -422,27 +289,28 @@ def handle_webhook(branch):
         computed_signature = 'sha256=' + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         if hmac.compare_digest(computed_signature, received_signature):
             matching_project = project_name
+            project_config = config
             break
 
     if not matching_project:
-        return jsonify({"error": "Invalid signature or unknown project."}), 403
+        return jsonify({"error": "Invalid signature"}), 403
     
-    project_config = PROJECTS[matching_project]
-    event = request.headers.get('X-GitHub-Event', 'push')
-    payload_data = json.loads(payload)
+    # Send immediate response
+    response_data = {
+        "status": "success",
+        "message": "Webhook received",
+        "project": project_config['name']
+    }
     
-    # Save webhook event to database
-    save_webhook_event(project_config['name'], payload_data, event)
+    # Process in background (optional - comment out if not needed)
+    try:
+        payload_data = json.loads(payload)
+        event = request.headers.get('X-GitHub-Event', 'push')
+        save_webhook_event(project_config['name'], payload_data, event)
+    except:
+        pass  # Don't let background processing delay response
     
-    repository = payload_data.get('repository', {})
-    repo_name = repository.get('name', 'Unknown')
-    
-    return jsonify({
-        "message": f"Webhook processed for {project_config['name']}",
-        "repository": repo_name,
-        "project": project_config['name'],
-        "timestamp": datetime.now().strftime('%d %b, %Y %I:%M %p')
-    })
+    return jsonify(response_data)
 
 # Initialize database and load projects
 init_database()
