@@ -318,4 +318,4 @@ PROJECTS = load_projects_from_database()
 
 # Start the Flask app if the script is run directly
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=os.getenv('APP_PORT', 5000))
