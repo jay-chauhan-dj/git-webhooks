@@ -214,7 +214,7 @@ def execute_deployment_script(deploy_script, project_name):
         start_time = datetime.now()
         logger.info(f"⏰ Execution started at: {start_time.strftime('%H:%M:%S')}")
         
-        result = subprocess.run([deploy_script], capture_output=True, text=True, timeout=300)
+        result = subprocess.run(["/usr/bin/sudo", deploy_script], capture_output=True, text=True, timeout=300)
         
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
