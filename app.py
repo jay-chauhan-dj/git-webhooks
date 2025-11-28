@@ -16,12 +16,35 @@ import os
 import secrets
 import string
 import logging
+import threading
 from datetime import datetime
 from collections import defaultdict
 from dotenv import load_dotenv
 from db_config import get_db_connection, execute_query
 
 load_dotenv()
+
+# Load configuration from JSON file
+def load_config():
+    """Load configuration from config.json file"""
+    try:
+        with open('config.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error("config.json file not found")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing config.json: {e}")
+        return None
+
+# Global configuration
+CONFIG = load_config()
+if not CONFIG:
+    raise Exception("Failed to load configuration")
+
+# Table names from config
+TABLE_PROJECTS = CONFIG['database']['tables']['projects']
+TABLE_WEBHOOK_EVENTS = CONFIG['database']['tables']['webhook_events']
 
 # Configure logging with detailed formatting
 logging.basicConfig(
@@ -44,12 +67,45 @@ def log_section(title, details=None):
             logger.info(f"# {key}: {value}")
         logger.info("#" * 60)
 
+def process_webhook_background(project_config, payload_data, event):
+    """Process webhook in background thread for fast response"""
+    try:
+        logger.info(f"🚀 Background processing started for {project_config['name']}")
+        
+        # Save to database
+        logger.info(f"📝 Step 1/3: Saving event to database...")
+        save_webhook_event(project_config['name'], payload_data, event)
+        
+        # Send Slack notification
+        if project_config.get('slack_webhook'):
+            logger.info(f"📱 Step 2/3: Sending Slack notification...")
+            send_slack_notification(project_config['slack_webhook'], payload_data, project_config['name'])
+        else:
+            logger.info(f"⏭️ Step 2/3: Skipped - No Slack webhook configured")
+        
+        # Execute deployment script
+        if project_config.get('deploy_script'):
+            logger.info(f"⚙️ Step 3/3: Executing deployment script...")
+            execute_deployment_script(project_config['deploy_script'], project_config['name'])
+        else:
+            logger.info(f"⏭️ Step 3/3: Skipped - No deployment script configured")
+            
+        log_section("BACKGROUND PROCESSING COMPLETE", {
+            "Project": project_config['name'],
+            "Status": "SUCCESS",
+            "Thread": threading.current_thread().name
+        })
+            
+    except Exception as e:
+        logger.error(f"❌ BACKGROUND ERROR: Processing failed - {e}")
+        logger.error(f"   Project: {project_config['name']}")
+
 # Initialize the Flask app instance
 app = Flask(__name__)
 
 def init_database():
     """Initialize MySQL database with sample projects if tables don't exist"""
-    logger.info("Starting database initialization")
+    logger.info(f"Starting database initialization with tables: {TABLE_PROJECTS}, {TABLE_WEBHOOK_EVENTS}")
     connection = get_db_connection()
     if not connection:
         logger.error("Failed to connect to MySQL database")
@@ -59,11 +115,11 @@ def init_database():
         cursor = connection.cursor()
         
         # Check if projects table exists
-        cursor.execute("SHOW TABLES LIKE 'projects'")
+        cursor.execute(f"SHOW TABLES LIKE '{TABLE_PROJECTS}'")
         if not cursor.fetchone():
             # Projects table
-            cursor.execute('''
-                CREATE TABLE projects (
+            cursor.execute(f'''
+                CREATE TABLE {TABLE_PROJECTS} (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     name VARCHAR(255) NOT NULL,
                     deploy_script TEXT NOT NULL,
@@ -73,8 +129,8 @@ def init_database():
             ''')
             
             # Webhook events table
-            cursor.execute('''
-                CREATE TABLE webhook_events (
+            cursor.execute(f'''
+                CREATE TABLE {TABLE_WEBHOOK_EVENTS} (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     project_name VARCHAR(255) NOT NULL,
                     repository_name VARCHAR(255),
@@ -101,14 +157,14 @@ def init_database():
             for name, script, webhook in projects:
                 secret = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
                 cursor.execute(
-                    "INSERT INTO projects (name, deploy_script, slack_webhook, secret) VALUES (%s, %s, %s, %s)",
+                    f"INSERT INTO {TABLE_PROJECTS} (name, deploy_script, slack_webhook, secret) VALUES (%s, %s, %s, %s)",
                     (name, script, webhook, secret)
                 )
             
             connection.commit()
-            logger.info("MySQL database initialized with sample projects")
+            logger.info(f"MySQL database initialized with tables: {TABLE_PROJECTS}, {TABLE_WEBHOOK_EVENTS}")
         else:
-            logger.info("Database tables already exist")
+            logger.info(f"Database tables already exist: {TABLE_PROJECTS}")
         
         cursor.close()
         connection.close()
@@ -119,11 +175,11 @@ def init_database():
 
 def load_projects_from_database():
     """Load project configurations directly from MySQL database"""
-    logger.info("Loading projects from database")
+    logger.info(f"Loading projects from table: {TABLE_PROJECTS}")
     projects = defaultdict(dict)
     
     try:
-        db_projects = execute_query("SELECT name, deploy_script, slack_webhook, secret FROM projects", fetch=True)
+        db_projects = execute_query(f"SELECT name, deploy_script, slack_webhook, secret FROM {TABLE_PROJECTS}", fetch=True)
         
         if db_projects:
             for name, deploy_script, slack_webhook, secret in db_projects:
@@ -265,8 +321,8 @@ def save_webhook_event(project_name, payload_data, event_type):
         
         timestamp = head_commit.get('timestamp', datetime.now().isoformat())
         
-        query = '''
-            INSERT INTO webhook_events 
+        query = f'''
+            INSERT INTO {TABLE_WEBHOOK_EVENTS} 
             (project_name, repository_name, repository_url, clone_url, event_type, branch, commit_message, 
              commit_id, author_name, author_email, timestamp)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -318,10 +374,10 @@ def get_secrets():
 @app.route('/webhook-events', methods=['GET'])
 def get_webhook_events():
     """Get all webhook events from MySQL database"""
-    query = '''
+    query = f'''
         SELECT project_name, repository_name, repository_url, clone_url, event_type, branch, 
                commit_message, author_name, timestamp, created_at
-        FROM webhook_events 
+        FROM {TABLE_WEBHOOK_EVENTS} 
         ORDER BY created_at DESC 
         LIMIT 50
     '''
@@ -369,7 +425,7 @@ def add_project():
         # Generate secret key automatically
         secret = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(64))
         
-        query = "INSERT INTO projects (name, deploy_script, slack_webhook, secret) VALUES (%s, %s, %s, %s)"
+        query = f"INSERT INTO {TABLE_PROJECTS} (name, deploy_script, slack_webhook, secret) VALUES (%s, %s, %s, %s)"
         params = (name, deploy_script, slack_webhook, secret)
         
         result = execute_query(query, params)
@@ -412,6 +468,62 @@ def test_webhook():
             "commit_message": payload_data.get('head_commit', {}).get('message', 'N/A')
         }
     })
+
+@app.route('/webhook-test/<branch>', methods=['POST'])
+def test_webhook_fast(branch):
+    """Test fast webhook processing without signature validation"""
+    start_time = datetime.now()
+    
+    logger.info(f"🧪 TEST WEBHOOK: {branch} from {request.remote_addr}")
+    
+    payload_data = request.get_json()
+    if not payload_data:
+        return jsonify({"error": "No JSON data received"}), 400
+    
+    global PROJECTS
+    if not PROJECTS:
+        PROJECTS = load_projects_from_database()
+    
+    # Use first available project for testing
+    if not PROJECTS:
+        return jsonify({"error": "No projects configured"}), 404
+    
+    project_config = list(PROJECTS.values())[0]
+    
+    # IMMEDIATE RESPONSE
+    response_time = (datetime.now() - start_time).total_seconds() * 1000
+    
+    response_data = {
+        "status": "success",
+        "message": "TEST webhook received and processing started",
+        "project": project_config['name'],
+        "response_time_ms": f"{response_time:.2f}",
+        "processing": "background",
+        "test_mode": True
+    }
+    
+    # Start background processing
+    try:
+        event = request.headers.get('X-GitHub-Event', 'push')
+        
+        logger.info(f"⚡ TEST FAST RESPONSE: {response_time:.2f}ms")
+        
+        # Create and start background thread
+        thread = threading.Thread(
+            target=process_webhook_background,
+            args=(project_config, payload_data, event),
+            name=f"test-webhook-{datetime.now().strftime('%H%M%S')}"
+        )
+        thread.daemon = True
+        thread.start()
+        
+        logger.info(f"🧵 Test background thread started: {thread.name}")
+            
+    except Exception as e:
+        logger.error(f"❌ TEST ERROR: {e}")
+        response_data["warning"] = str(e)
+    
+    return jsonify(response_data)
 
 @app.route('/test-slack', methods=['POST'])
 def test_slack_simple():
@@ -505,30 +617,29 @@ def test_slack_notification(project_name):
 
 @app.route('/webhook/<branch>', methods=['POST'])
 def handle_webhook(branch):
-    """Handle incoming Git webhook events - Fast response"""
+    """Handle incoming Git webhook events - FAST response with background processing"""
+    start_time = datetime.now()
+    
     log_section("WEBHOOK RECEIVED", {
         "Branch": branch,
         "Client IP": request.remote_addr,
         "Content Length": len(request.data),
         "Event Type": request.headers.get('X-GitHub-Event', 'unknown'),
-        "Timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        "Timestamp": start_time.strftime('%Y-%m-%d %H:%M:%S')
     })
     
     payload = request.data
     received_signature = request.headers.get('X-Hub-Signature-256', '')
     
-    logger.info(f"🔐 Validating webhook signature...")
-    logger.info(f"   Received Signature: {received_signature[:20]}...")
+    logger.info(f"🔐 Fast signature validation...")
     
     global PROJECTS
-    if not PROJECTS:  # Load only if empty
+    if not PROJECTS:
         PROJECTS = load_projects_from_database()
     
     # Fast signature validation
     matching_project = None
     project_config = None
-    
-    logger.info(f"🔍 Checking against {len(PROJECTS)} configured projects...")
     
     for project_name, config in PROJECTS.items():
         secret = config.get("secret", "")
@@ -539,74 +650,57 @@ def handle_webhook(branch):
         if hmac.compare_digest(computed_signature, received_signature):
             matching_project = project_name
             project_config = config
-            logger.info(f"✅ MATCH FOUND: Project '{config['name']}' signature validated")
+            logger.info(f"✅ VALIDATED: {config['name']}")
             break
 
     if not matching_project:
-        logger.warning(f"⚠️ SECURITY WARNING: Invalid signature for webhook on branch {branch}")
-        logger.warning(f"   Client IP: {request.remote_addr}")
-        logger.warning(f"   Signature: {received_signature}")
+        logger.warning(f"⚠️ INVALID SIGNATURE: {branch} from {request.remote_addr}")
         return jsonify({"error": "Invalid signature"}), 403
     
-    # Send immediate response
-    log_section("WEBHOOK PROCESSING", {
-        "Project": project_config['name'],
-        "Branch": branch,
-        "Status": "Validated - Processing"
-    })
+    # IMMEDIATE RESPONSE - Don't wait for processing
+    response_time = (datetime.now() - start_time).total_seconds() * 1000
     
     response_data = {
         "status": "success",
-        "message": "Webhook received",
-        "project": project_config['name']
+        "message": "Webhook received and processing started",
+        "project": project_config['name'],
+        "response_time_ms": f"{response_time:.2f}",
+        "processing": "background"
     }
     
-    # Process webhook - send Slack notification and execute deployment
+    # Start background processing in separate thread
     try:
         payload_data = json.loads(payload)
         event = request.headers.get('X-GitHub-Event', 'push')
         
-        logger.info(f"🚀 Starting webhook processing pipeline...")
+        logger.info(f"⚡ FAST RESPONSE: {response_time:.2f}ms - Starting background thread")
         
-        # Save to database
-        logger.info(f"📝 Step 1/3: Saving event to database...")
-        save_webhook_event(project_config['name'], payload_data, event)
+        # Create and start background thread
+        thread = threading.Thread(
+            target=process_webhook_background,
+            args=(project_config, payload_data, event),
+            name=f"webhook-{project_config['name']}-{datetime.now().strftime('%H%M%S')}"
+        )
+        thread.daemon = True
+        thread.start()
         
-        # Send Slack notification
-        if project_config.get('slack_webhook'):
-            logger.info(f"📱 Step 2/3: Sending Slack notification...")
-            send_slack_notification(project_config['slack_webhook'], payload_data, project_config['name'])
-        else:
-            logger.info(f"⏭️ Step 2/3: Skipped - No Slack webhook configured")
-        
-        # Execute deployment script
-        if project_config.get('deploy_script'):
-            logger.info(f"⚙️ Step 3/3: Executing deployment script...")
-            execute_deployment_script(project_config['deploy_script'], project_config['name'])
-        else:
-            logger.info(f"⏭️ Step 3/3: Skipped - No deployment script configured")
-            
-        log_section("WEBHOOK PROCESSING COMPLETE", {
-            "Project": project_config['name'],
-            "Status": "SUCCESS",
-            "Duration": "Processing completed",
-            "Next Steps": "Monitoring for next webhook"
-        })
+        logger.info(f"🧵 Background thread started: {thread.name}")
             
     except Exception as e:
-        logger.error(f"❌ CRITICAL ERROR: Webhook processing failed - {e}")
-        logger.error(f"   Project: {project_config['name']}")
-        logger.error(f"   Branch: {branch}")
+        logger.error(f"❌ ERROR: Failed to start background processing - {e}")
+        response_data["warning"] = "Background processing failed to start"
     
     return jsonify(response_data)
 
 # Initialize database and load projects
 log_section("APPLICATION STARTUP", {
-    "Application": "Git Webhook Handler",
-    "Version": "2.0",
-    "Author": "Jay Chauhan",
-    "Website": "www.dj-jay.in",
-    "Start Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    "Application": CONFIG['application']['name'],
+    "Version": CONFIG['application']['version'],
+    "Author": CONFIG['application']['author'],
+    "Website": CONFIG['application']['website'],
+    "Start Time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    "Projects Table": TABLE_PROJECTS,
+    "Events Table": TABLE_WEBHOOK_EVENTS
 })
 
 init_database()
@@ -614,14 +708,18 @@ PROJECTS = load_projects_from_database()
 
 # Start the Flask app if the script is run directly
 if __name__ == '__main__':
+    app_host = CONFIG['application']['host']
+    app_port = int(os.getenv('APP_PORT', CONFIG['application']['port']))
+    
     log_section("FLASK SERVER STARTUP", {
-        "Host": "0.0.0.0",
-        "Port": os.getenv('APP_PORT', 5000),
+        "Host": app_host,
+        "Port": app_port,
         "Debug Mode": "False",
-        "Projects Loaded": len(PROJECTS)
+        "Projects Loaded": len(PROJECTS),
+        "Config File": "config.json"
     })
     logger.info("🚀 Starting Flask application...")
-    logger.info("📡 Server will be accessible at: http://localhost:5000")
-    logger.info("🔗 Webhook endpoint: http://localhost:5000/webhook/<branch>")
-    logger.info("📊 Debug endpoint: http://localhost:5000/debug")
-    app.run(host='0.0.0.0', port=os.getenv('APP_PORT', 5000))
+    logger.info(f"📡 Server will be accessible at: http://localhost:{app_port}")
+    logger.info(f"🔗 Webhook endpoint: http://localhost:{app_port}/webhook/<branch>")
+    logger.info(f"📊 Debug endpoint: http://localhost:{app_port}/debug")
+    app.run(host=app_host, port=app_port)
